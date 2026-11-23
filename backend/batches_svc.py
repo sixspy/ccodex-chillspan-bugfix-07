@@ -86,9 +86,12 @@ def get_batch(batch_id: int, authorization: AuthHeader = None):
 @router.post("/api/batches")
 def create_batch(body: BatchIn, authorization: AuthHeader = None):
     user = require_writer(authorization)
-    lock_key = f"chamber:{body.chamber_id}"
+    # 全局锁序：探头互斥锁 → 仓间配额锁。同探头灌点串行，后到只存痕。
+    probe_key = f"probe:{body.probe_id}"
+    chamber_key = f"chamber:{body.chamber_id}"
     with connect() as conn:
-        require_lock(conn, lock_key, user)
+        require_lock(conn, probe_key, user)
+        require_lock(conn, chamber_key, user)
         try:
             ch = conn.execute(
                 "SELECT * FROM cold_chambers WHERE id=?", (body.chamber_id,)
@@ -107,7 +110,26 @@ def create_batch(body: BatchIn, authorization: AuthHeader = None):
             ).fetchone()
             if not probe or probe["chamber_id"] != body.chamber_id:
                 raise HTTPException(422, "探头与仓间不匹配")
-            validate_probe_online(probe)
+            try:
+                validate_probe_online(probe)
+            except HTTPException:
+                # 偏离纪要：记「离线采样偏航」并拒写。存证与锁释放同笔提交：
+                # 锁痕相互抵消，只留偏航存证，不随业务回滚丢失。
+                write_audit(
+                    conn,
+                    user,
+                    "离线采样偏航",
+                    probe["probe_code"],
+                    {
+                        "chamber_id": body.chamber_id,
+                        "attempted_points": len(body.temp_points or []),
+                        "track": "甲·拒写",
+                    },
+                )
+                release(conn, probe_key, user)
+                release(conn, chamber_key, user)
+                conn.commit()
+                raise
             points = body.temp_points or []
             for pt in points:
                 validate_temp_point(
@@ -155,4 +177,5 @@ def create_batch(body: BatchIn, authorization: AuthHeader = None):
                 "point_count": len(points),
             }
         finally:
-            release(conn, lock_key, user)
+            release(conn, probe_key, user)
+            release(conn, chamber_key, user)

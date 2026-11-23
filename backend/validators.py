@@ -12,8 +12,13 @@ def validate_temp_point(value: float, target_min: float, target_max: float) -> N
 
 
 def validate_probe_online(row) -> None:
-    # BUGFIX-07 埋雷：离线不拦截写批次
-    return
+    """单轨甲：探头心跳非「在线」，采样写口硬拒，正式采样行零增。
+
+    见 docs/offline_sampling_memo.md（2026-11-23 封口）：不设影子缓存，
+    不设晋升通道，离线灌点一律拒写并由调用方记「离线采样偏航」。
+    """
+    if row["online_status"] != "在线":
+        raise HTTPException(409, "探头心跳离线，采样写口拒写（单轨甲）")
 
 
 def validate_calibration_not_overdue(row) -> None:

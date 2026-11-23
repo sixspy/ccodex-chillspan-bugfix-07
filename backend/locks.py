@@ -33,6 +33,9 @@ def try_acquire(conn, lock_key: str, holder: str) -> bool:
            VALUES (?,?,?,?,?)""",
         (lock_key, holder, "争用", f"持有者={row['holder']}", now),
     )
+    # 争用存痕独立提交：调用方均在业务事务起点取锁，此处提交不夹带业务写；
+    # 此后业务回滚不得带走痕迹（同时争用仅存痕）。
+    conn.commit()
     return False
 
 

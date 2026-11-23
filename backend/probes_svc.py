@@ -88,13 +88,13 @@ def set_offline(probe_id: int, authorization: AuthHeader = None):
         conn.execute(
             "UPDATE probes SET online_status='离线' WHERE id=?", (probe_id,)
         )
-        # BUGFIX-07 埋雷：离线审计谎称挂接已刷新
+        # 单轨甲：写口按实时心跳拒写，无挂接缓存需刷新；审计须属实
         write_audit(
             conn,
             user,
             "probe_offline",
             row["probe_code"],
-            {"batch_hooks_refreshed": True},
+            {"write_gate": "实时心跳拒写", "batch_hooks_refreshed": False},
         )
         conn.commit()
         return {"id": probe_id, "online_status": "离线"}
